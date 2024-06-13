@@ -41,6 +41,13 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+# New variables to count processed files and errors
+magic_processed_count = 0
+pokemon_processed_count = 0
+lorcana_processed_count = 0
+fixed_files_count = 0
+error_files_count = 0
+
 def sanitize_filename(name):
     name = name.replace('&', 'and')
     nfkd_form = unicodedata.normalize('NFD', name)
@@ -52,7 +59,7 @@ def preprocess_file_names(directory):
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if d not in ['Processed', 'Error']]
         for file in files:
-            if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
                 original_path = os.path.join(root, file)
                 directory = os.path.dirname(original_path)
                 file_extension = os.path.splitext(original_path)[1]
@@ -113,7 +120,8 @@ def rename_card_image(image_path, card_name):
             counter += 1
         
         os.rename(image_path, new_file_path)
-        logging.info(f"Renamed {image_path} to {new_file_path}")
+        logging.info(f"Renamed '{os.path.basename(image_path)}' to '{os.path.basename(new_file_path)}'")
+        print(f"Renamed '{os.path.basename(image_path)}' to '{os.path.basename(new_file_path)}'")
         
         return new_file_path
     except Exception as e:
@@ -139,6 +147,7 @@ def move_file(file_path, destination_folder):
         logging.error(f"Error moving file {file_path} to {destination_folder}: {e}")
 
 def process_magic_directory(directory):
+    global magic_processed_count, error_files_count
     no_new_files = True
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if d not in ['Processed', 'Error']]
@@ -151,7 +160,7 @@ def process_magic_directory(directory):
         error_folder = os.path.join(root, 'Error')
         
         for file in files:
-            if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
                 no_new_files = False
                 try:
                     image_path = os.path.join(root, file)
@@ -165,12 +174,16 @@ def process_magic_directory(directory):
                             move_file(new_file_path, processed_folder)
                         else:
                             move_file(image_path, error_folder)
+                            error_files_count += 1
                     else:
                         move_file(image_path, error_folder)
+                        error_files_count += 1
+                    magic_processed_count += 1
                 except Exception as e:
                     logging.error(f"Error processing file {file}: {e}")
                     print("Error: Please check Log.txt for details")
                     move_file(os.path.join(root, file), error_folder)
+                    error_files_count += 1
         print("Complete!")
     return no_new_files
 
@@ -270,6 +283,7 @@ def process_pokemon_image(image_path, api_key, root):
         move_file(image_path, os.path.join(root, 'Error'))
 
 def process_pokemon_directory(directory, api_key):
+    global pokemon_processed_count, error_files_count
     no_new_files = True
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if d not in ['Processed', 'Error']]
@@ -280,25 +294,212 @@ def process_pokemon_directory(directory, api_key):
         logging.info(f"Now processing {root}")
         
         for file in files:
-            if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
                 no_new_files = False
                 try:
                     image_path = os.path.join(root, file)
                     logging.debug(f"Processing {image_path}")
                     
                     process_pokemon_image(image_path, api_key, root)
+                    pokemon_processed_count += 1
                 except Exception as e:
                     logging.error(f"Error processing file {file}: {e}")
                     print("Error: Please check Log.txt for details")
                     move_file(image_path, os.path.join(root, 'Error'))
+                    error_files_count += 1
         print("Complete!")
     return no_new_files
+
+# New functions for Lorcana processing
+
+def process_lorcana_image(image_path, api_key, root):
+    base64_image = encode_image(image_path)
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "system", "content": "You are a Lorcana trading card game expert that responds in JSON."},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Please identify this card. Only return the name of the card, and the series its from."
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 300
+    }
+
+    log_message = "Submitting picture for review..."
+    print(log_message)
+    logging.info(log_message)
+    
+    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+    
+    if response.status_code == 200:
+        response_data = response.json()
+        
+        try:
+            content = response_data['choices'][0]['message']['content']
+            card_data = json.loads(content.strip('```json').strip('```'))
+            card_name = card_data.get('name', '')
+            series = card_data.get('series', '')
+
+            if card_name and series:
+                sanitized_name = sanitize_filename(f"{card_name} - {series}.jpg")
+                directory, original_file_name = os.path.split(image_path)
+                new_image_path = os.path.join(directory, sanitized_name)
+                os.rename(image_path, new_image_path)
+                rename_message = f"Renamed '{original_file_name}' to '{os.path.basename(new_image_path)}'"
+                print(rename_message)
+                logging.info(rename_message)
+                move_file(new_image_path, os.path.join(root, 'Processed'))
+            else:
+                error_message = "Failed to parse the response."
+                print(error_message)
+                logging.error(error_message)
+                move_file(image_path, os.path.join(root, 'Error'))
+        except KeyError:
+            error_message = f"Unexpected response format: {response_data}"
+            print(error_message)
+            logging.error(error_message)
+            move_file(image_path, os.path.join(root, 'Error'))
+        except json.JSONDecodeError:
+            error_message = "Failed to decode the JSON response."
+            print(error_message)
+            logging.error(error_message)
+            move_file(image_path, os.path.join(root, 'Error'))
+    else:
+        error_message = f"Request failed with status code {response.status_code}"
+        print(error_message)
+        logging.error(error_message)
+        move_file(image_path, os.path.join(root, 'Error'))
+
+def process_lorcana_directory(directory, api_key):
+    global lorcana_processed_count, error_files_count
+    no_new_files = True
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d not in ['Processed', 'Error']]
+        
+        if root == directory:
+            continue
+        print(f"Now processing {root}")
+        logging.info(f"Now processing {root}")
+        
+        for file in files:
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
+                no_new_files = False
+                try:
+                    image_path = os.path.join(root, file)
+                    logging.debug(f"Processing {image_path}")
+                    
+                    process_lorcana_image(image_path, api_key, root)
+                    lorcana_processed_count += 1
+                except Exception as e:
+                    logging.error(f"Error processing file {file}: {e}")
+                    print("Error: Please check Log.txt for details")
+                    move_file(image_path, os.path.join(root, 'Error'))
+                    error_files_count += 1
+        print("Complete!")
+    return no_new_files
+
+def reprocess_error_files(directory, api_key):
+    global fixed_files_count
+    for root, dirs, files in os.walk(directory):
+        for d in dirs:
+            if d == 'Error':
+                error_folder = os.path.join(root, d)
+                processed_folder = os.path.join(root, 'Processed')
+                for file in os.listdir(error_folder):
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
+                        image_path = os.path.join(error_folder, file)
+                        logging.info(f"Reprocessing {image_path}")
+                        print(f"Reprocessing {image_path}")
+                        
+                        base64_image = encode_image(image_path)
+                        
+                        headers = {
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {api_key}"
+                        }
+                        
+                        payload = {
+                            "model": "gpt-4o",
+                            "messages": [
+                                {"role": "system", "content": "You are a TCG expert that responds in JSON."},
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "Please identify this card. Only return the name of the card, and the series it's from."
+                                        },
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": f"data:image/jpeg;base64,{base64_image}"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ],
+                            "max_tokens": 300
+                        }
+
+                        try:
+                            response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+                            
+                            if response.status_code == 200:
+                                response_data = response.json()
+                                
+                                try:
+                                    content = response_data['choices'][0]['message']['content']
+                                    card_data = json.loads(content.strip('```json').strip('```'))
+                                    card_name = card_data.get('name', '')
+                                    series = card_data.get('series', '')
+
+                                    if card_name and series:
+                                        sanitized_name = sanitize_filename(f"{card_name} - {series}.jpg")
+                                        new_image_path = os.path.join(os.path.dirname(image_path), sanitized_name)
+                                        os.rename(image_path, new_image_path)
+                                        rename_message = f"Renamed '{os.path.basename(image_path)}' to '{os.path.basename(new_image_path)}'"
+                                        print(rename_message)
+                                        logging.info(rename_message)
+                                        move_file(new_image_path, processed_folder)
+                                        fixed_files_count += 1
+                                    else:
+                                        move_file(image_path, error_folder)
+                                        logging.error(f"Failed to parse the response for {image_path}")
+                                except (KeyError, json.JSONDecodeError) as e:
+                                    logging.error(f"Error decoding response for {image_path}: {e}")
+                                    move_file(image_path, error_folder)
+                            else:
+                                logging.error(f"Request failed for {image_path} with status code {response.status_code}")
+                                move_file(image_path, error_folder)
+                        except Exception as e:
+                            logging.error(f"Error reprocessing file {file}: {e}")
+                            print(f"Error: Please check Log.txt for details")
+                            move_file(image_path, error_folder)
 
 def main():
     logging.info("Script is starting up...")
     
     pokemon_folder = "Pokemon"
     magic_folder = "Magic"
+    lorcana_folder = "Lorcana"
     
     config_file = "tcg.cfg"
     api_key = read_api_key(config_file)
@@ -314,14 +515,41 @@ def main():
         logging.info("Magic folder detected. Running EasyOCR script.")
         preprocess_file_names(magic_folder)
         no_new_files = process_magic_directory(magic_folder) and no_new_files
+
+    if os.path.exists(lorcana_folder):
+        logging.info("Lorcana folder detected. Running OpenAI submission script.")
+        preprocess_file_names(lorcana_folder)
+        no_new_files = process_lorcana_directory(lorcana_folder, api_key) and no_new_files
+
+    print(f"Total Magic files processed: {magic_processed_count}")
+    print(f"Total Pokemon files processed: {pokemon_processed_count}")
+    print(f"Total Lorcana files processed: {lorcana_processed_count}")
+    print(f"Errors during processing: {error_files_count}")
     
-    if no_new_files:
-        print("No new files detected.")
-        logging.info("No new files detected.")
-    
-    if not os.path.exists(pokemon_folder) and not os.path.exists(magic_folder):
-        logging.error("No folder detected. Please create 'Pokemon' or 'Magic' folder.")
-        print("No folder detected. Please create 'Pokemon' or 'Magic' folder.")
+    logging.info(f"Total Magic files processed: {magic_processed_count}")
+    logging.info(f"Total Pokemon files processed: {pokemon_processed_count}")
+    logging.info(f"Total Lorcana files processed: {lorcana_processed_count}")
+    logging.info(f"Errors during processing: {error_files_count}")
+
+    if error_files_count > 0:
+        response = input("Auto-TCG-Renamer detected files in your Error folders.\nWould you like to re-check these files using OpenAI? (Y/N): ")
+        if response.lower() in ['n', 'no']:
+            print("Exiting gracefully.")
+            logging.info("Exiting gracefully.")
+            sys.exit(0)
+
+    logging.info("Reprocessing error files...")
+    print("Reprocessing error files...")
+
+    if os.path.exists(pokemon_folder):
+        reprocess_error_files(pokemon_folder, api_key)
+    if os.path.exists(magic_folder):
+        reprocess_error_files(magic_folder, api_key)
+    if os.path.exists(lorcana_folder):
+        reprocess_error_files(lorcana_folder, api_key)
+
+    print(f"Total fixed files: {fixed_files_count}")
+    logging.info(f"Total fixed files: {fixed_files_count}")
     
     logging.info("Processing complete. Exiting gracefully.")
     print("Processing complete. Press Enter to exit.")
