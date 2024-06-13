@@ -80,11 +80,10 @@ This has only been tested on Windows.
      ```
      setx PATH "%PATH%;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\libnvvp;C:\tools\cuda\bin"
      setx CUDA_HOME "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8"
-     
   4. Verify that your paths are correct by using the following command on the command line:
      `nvcc --version`
   5. Install the correct version of Torch using the following command:
-`pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`
+    `pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`
 
 If everything is set up correctly, open up a python console and execute the following command: 
 ```
@@ -103,7 +102,3 @@ If this returns True, you can use CUDA now!
 ## License
 
 This project is licensed under the MIT License.
-
-```
-
-This README file provides a comprehensive overview of the script, setup instructions, usage, and examples, making it suitable for a GitHub repository. Let me know if you need any further modifications!
