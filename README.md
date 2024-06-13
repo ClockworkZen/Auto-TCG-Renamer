@@ -71,7 +71,7 @@ pip install easyocr requests opencv-python
 - The script logs its actions and any errors to `log.txt`.
 
 ### Enabling CUDA
-
+EasyOCR, used to recognize the Magic the Gathering cards in this utility, is vastly sped up by using your GPU if it's supported. Here's how if you're using a recent Nvidia card.
 This has only been tested on Windows.
 
  1. Download and install [CUDA Toolkit 11.8](https://developer.nvidia.com/cuda-11-8-0-download-archive)
